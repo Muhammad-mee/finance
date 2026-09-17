@@ -2,34 +2,120 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Финансовый Учет</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .card-stat { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; border: none; color: white; }
-        .card-stat:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.15); }
+        body { 
+            background-color: #f4f6f9; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+        }
+
+        /* Шапка */
+        .navbar-brand {
+            font-weight: 600;
+        }
+
+        /* Карточки статистик */
+        .card-stat { 
+            cursor: pointer; 
+            transition: transform 0.2s ease, box-shadow 0.2s ease; 
+            border: none; 
+            color: white; 
+            border-radius: 10px;
+        }
+        .card-stat:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 6px 18px rgba(0,0,0,0.15); 
+        }
+
+        /* Цвета карточек */
         .bg-income { background-color: #198754 !important; }
         .bg-expense { background-color: #dc3545 !important; }
         .bg-debt { background-color: #ffc107 !important; color: #000 !important; }
         
-        .badge-income { background-color: #198754; color: white; padding: 6px 12px; border-radius: 4px; }
-        .badge-expense { background-color: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; }
-        .badge-debt { background-color: #ffc107; color: black; padding: 6px 12px; border-radius: 4px; }
+        /* Цвета бейджей в таблице */
+        .badge-income { background-color: #198754; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; display: inline-block; }
+        .badge-expense { background-color: #dc3545; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; display: inline-block; }
+        .badge-debt { background-color: #ffc107; color: black; padding: 6px 12px; border-radius: 6px; font-weight: 500; display: inline-block; }
 
+        /* Полосы слева в таблице для типов */
         .tr-income { border-left: 5px solid #198754; }
         .tr-expense { border-left: 5px solid #dc3545; }
         .tr-debt { border-left: 5px solid #ffc107; }
         
-        .avatar-img { width: 45px; height: 45px; object-fit: cover; border-radius: 50%; border: 2px solid #fff; }
+        /* Аватарка пользователя */
+        .avatar-img { 
+            width: 45px; 
+            height: 45px; 
+            object-fit: cover; 
+            border-radius: 50%; 
+            border: 2px solid #fff; 
+        }
+
+        /* Контейнер таблицы с горизонтальной прокруткой для мобильных */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* ================================================= */
+        /*               МЕДИАЗАПРОСЫ (@media)               */
+        /* ================================================= */
+
+        /* Смартфоны (до 576px) */
+        @media (max-width: 576px) {
+            .navbar .container {
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+
+            .card-stat h5 {
+                font-size: 1rem;
+            }
+
+            .card-stat h3 {
+                font-size: 1.4rem;
+            }
+
+            .table th, .table td {
+                font-size: 0.85rem;
+                padding: 10px 8px;
+                white-space: nowrap;
+            }
+
+            .btn-mobile-full {
+                width: 100%;
+                margin-top: 5px;
+            }
+
+            .form-control, .form-select {
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Планшеты (от 577px до 768px) */
+        @media (min-width: 577px) and (max-width: 768px) {
+            .card-stat h3 {
+                font-size: 1.6rem;
+            }
+
+            .table th, .table td {
+                font-size: 0.9rem;
+            }
+        }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-dark mb-4">
+<!-- Навигация -->
+<nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
     <div class="container d-flex justify-content-between align-items-center">
-        <span class="navbar-brand mb-0 h1">Панель Учета</span>
+        <span class="navbar-brand mb-0 h1">📊 Панель Учета</span>
         <div class="d-flex align-items-center gap-3 text-white">
-            <img src="{{ current_user.avatar_url }}" class="avatar-img" alt="Avatar">
+            <img src="{{ current_user.avatar_url or 'https://via.placeholder.com/150' }}" class="avatar-img" alt="Avatar">
             <span>{{ current_user.username }} (<strong>{{ current_user.role }}</strong>)</span>
             <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">Выход</a>
         </div>
@@ -37,10 +123,11 @@
 </nav>
 
 <div class="container">
+    <!-- Уведомления системных сообщений -->
     {% with messages = get_flashed_messages() %}
       {% if messages %}
         {% for message in messages %}
-          <div class="alert alert-info alert-dismissible fade show" role="alert">
+          <div class="alert alert-info alert-dismissible fade show shadow-sm" role="alert">
             {{ message }}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
           </div>
@@ -48,33 +135,34 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Карточки доходов/расходов -->
+    <!-- Сводные карточки (Клик по карточке фильтрует таблицу) -->
     <div class="row g-3 mb-4">
         <div class="col-md-4">
-            <div class="card card-stat bg-income p-3 text-center" onclick="filterType('income')">
+            <div class="card card-stat bg-income p-3 text-center shadow-sm" onclick="filterType('income')" title="Нажмите, чтобы показать только доходы">
                 <h5>Доход</h5>
                 <h3>{{ income }}</h3>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="card card-stat bg-expense p-3 text-center" onclick="filterType('expense')">
+            <div class="card card-stat bg-expense p-3 text-center shadow-sm" onclick="filterType('expense')" title="Нажмите, чтобы показать только затраты">
                 <h5>Затраты</h5>
                 <h3>{{ expense }}</h3>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="card card-stat bg-debt p-3 text-center" onclick="filterType('debt')">
+            <div class="card card-stat bg-debt p-3 text-center shadow-sm" onclick="filterType('debt')" title="Нажмите, чтобы показать только долги">
                 <h5>Долги</h5>
                 <h3>{{ debt }}</h3>
             </div>
         </div>
     </div>
 
+    <!-- Блок ввода данных и загрузки аватарки -->
     <div class="row g-3 mb-4">
         <!-- Добавление записи -->
-        <div class="col-md-8">
-            <div class="card p-3 shadow-sm">
-                <h5>Добавить запись</h5>
+        <div class="col-lg-8">
+            <div class="card p-3 shadow-sm border-0">
+                <h5 class="mb-3">➕ Добавить запись</h5>
                 <form action="{{ url_for('add_record') }}" method="POST" class="row g-2">
                     <div class="col-md-3">
                         <select name="type" class="form-select" required>
@@ -84,34 +172,34 @@
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <input type="number" step="any" name="amount" class="form-content form-control" placeholder="Сумма" required>
+                        <input type="number" step="any" name="amount" class="form-control" placeholder="Сумма" required>
                     </div>
                     <div class="col-md-4">
                         <input type="text" name="description" class="form-control" placeholder="Описание">
                     </div>
                     <div class="col-md-2">
-                        <button type="submit" class="btn btn-success w-100">Сохранить</button>
+                        <button type="submit" class="btn btn-success w-100 btn-mobile-full">Сохранить</button>
                     </div>
                 </form>
             </div>
         </div>
 
         <!-- Смена аватарки -->
-        <div class="col-md-4">
-            <div class="card p-3 shadow-sm">
-                <h5>Загрузить аватарку</h5>
+        <div class="col-lg-4">
+            <div class="card p-3 shadow-sm border-0">
+                <h5 class="mb-3">🖼️ Загрузить аватарку</h5>
                 <form action="{{ url_for('update_avatar') }}" method="POST" enctype="multipart/form-data">
                     <input type="file" name="avatar_file" accept="image/*" class="form-control mb-2" required>
-                    <button type="submit" class="btn btn-primary btn-sm w-100">Изменить фото</button>
+                    <button type="submit" class="btn btn-primary btn-sm w-100 btn-mobile-full">Изменить фото</button>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- Управление пользователями для Суперадмина -->
+    <!-- Панель управления пользователями (Видна только Суперадмину) -->
     {% if current_user.role == 'superadmin' %}
     <div class="card p-3 mb-4 shadow-sm border-danger">
-        <h5 class="text-danger">Панель Суперадмина (Пользователи)</h5>
+        <h5 class="text-danger mb-3">👑 Панель Суперадмина (Управление аккаунтами)</h5>
         
         <form action="{{ url_for('create_admin') }}" method="POST" class="row g-2 mb-3">
             <div class="col-md-3"><input type="text" name="username" class="form-control" placeholder="Имя пользователя" required></div>
@@ -122,78 +210,87 @@
                     <option value="superadmin">Суперадмин</option>
                 </select>
             </div>
-            <div class="col-md-3"><button type="submit" class="btn btn-danger w-100">Создать пользователя</button></div>
+            <div class="col-md-3"><button type="submit" class="btn btn-danger w-100 btn-mobile-full">Создать аккаунт</button></div>
         </form>
 
-        <table class="table table-sm">
-            <thead>
-                <tr>
-                    <th>ID</th><th>Имя</th><th>Роль</th><th>Действия</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for u in users %}
-                <tr>
-                    <td>{{ u.id }}</td>
-                    <td>{{ u.username }}</td>
-                    <td><span class="badge bg-secondary">{{ u.role }}</span></td>
-                    <td>
-                        <form action="{{ url_for('edit_user', id=u.id) }}" method="POST" class="d-inline-flex gap-1">
-                            <input type="text" name="username" class="form-control form-control-sm" placeholder="Новое имя">
-                            <input type="password" name="password" class="form-control form-control-sm" placeholder="Новый пароль">
-                            <button type="submit" class="btn btn-warning btn-sm">Обновить</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Имя</th>
+                        <th>Роль</th>
+                        <th>Изменить данные</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.id }}</td>
+                        <td><strong>{{ u.username }}</strong></td>
+                        <td><span class="badge bg-secondary">{{ u.role }}</span></td>
+                        <td>
+                            <form action="{{ url_for('edit_user', id=u.id) }}" method="POST" class="d-flex flex-wrap gap-1">
+                                <input type="text" name="username" class="form-control form-control-sm" style="max-width: 130px;" placeholder="Новое имя">
+                                <input type="password" name="password" class="form-control form-control-sm" style="max-width: 130px;" placeholder="Новый пароль">
+                                <button type="submit" class="btn btn-warning btn-sm">Обновить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
     {% endif %}
 
-    <!-- Таблица записей -->
-    <div class="card p-3 shadow-sm">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="m-0">Список записей</h5>
-            <button class="btn btn-outline-secondary btn-sm" onclick="filterType('all')">Показать все</button>
+    <!-- Таблица записей с фильтрацией -->
+    <div class="card p-3 shadow-sm border-0 mb-5">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h5 class="m-0">📋 Список записей</h5>
+            <button class="btn btn-outline-secondary btn-sm" onclick="filterType('all')">Показать все записи</button>
         </div>
-        <table class="table align-middle">
-            <thead>
-                <tr>
-                    <th>Тип</th>
-                    <th>Сумма</th>
-                    <th>Описание</th>
-                    <th>Кто изменил</th>
-                    <th>Дата</th>
-                    {% if current_user.role == 'superadmin' %}<th>Действие</th>{% endif %}
-                </tr>
-            </thead>
-            <tbody id="records-table">
-                {% for r in records %}
-                <tr class="record-row tr-{{ r.type }}" data-type="{{ r.type }}">
-                    <td>
-                        {% if r.type == 'income' %}<span class="badge-income">Доход</span>{% endif %}
-                        {% if r.type == 'expense' %}<span class="badge-expense">Затраты</span>{% endif %}
-                        {% if r.type == 'debt' %}<span class="badge-debt">Долг</span>{% endif %}
-                    </td>
-                    <td><strong>{{ r.amount }}</strong></td>
-                    <td>{{ r.description }}</td>
-                    <td><strong>{{ r.updated_by }}</strong></td>
-                    <td>{{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                    {% if current_user.role == 'superadmin' %}
-                    <td>
-                        <form action="{{ url_for('delete_record', id=r.id) }}" method="POST" onsubmit="return confirm('Удалить эту запись?');">
-                            <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
-                        </form>
-                    </td>
-                    {% endif %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Тип</th>
+                        <th>Сумма</th>
+                        <th>Описание</th>
+                        <th>Кто изменил</th>
+                        <th>Дата</th>
+                        {% if current_user.role == 'superadmin' %}<th>Действие</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody id="records-table">
+                    {% for r in records %}
+                    <tr class="record-row tr-{{ r.type }}" data-type="{{ r.type }}">
+                        <td>
+                            {% if r.type == 'income' %}<span class="badge-income">Доход</span>{% endif %}
+                            {% if r.type == 'expense' %}<span class="badge-expense">Затраты</span>{% endif %}
+                            {% if r.type == 'debt' %}<span class="badge-debt">Долг</span>{% endif %}
+                        </td>
+                        <td><strong>{{ r.amount }}</strong></td>
+                        <td>{{ r.description or '-' }}</td>
+                        <td><strong>{{ r.updated_by }}</strong></td>
+                        <td>{{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        {% if current_user.role == 'superadmin' %}
+                        <td>
+                            <form action="{{ url_for('delete_record', id=r.id) }}" method="POST" onsubmit="return confirm('Удалить эту запись?');">
+                                <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                            </form>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
+<!-- JS-скрипт фильтрации -->
 <script>
 function filterType(type) {
     let rows = document.querySelectorAll('.record-row');
