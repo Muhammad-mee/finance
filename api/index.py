@@ -9,26 +9,25 @@ app = Flask(__name__, template_folder='../templates')
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
-# Подключение к Postgres (Vercel Postgres или Supabase / Neon)
-# По умолчанию для локальной проверки используется SQLite в памяти
+# Подключение к БД
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('POSTGRES_URL', 'sqlite:///:memory:')
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# --- Модели Базы Данных ---
+# --- Модели БД ---
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(10), nullable=False) # 'admin' или 'guest'
+    role = db.Column(db.String(10), nullable=False)  # 'admin' или 'guest'
     avatar_url = db.Column(db.String(500), default='https://via.placeholder.com/150')
 
 class Record(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(10), nullable=False) # 'income', 'expense', 'debt'
+    type = db.Column(db.String(10), nullable=False)  # 'income', 'expense', 'debt'
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.String(255))
     updated_by = db.Column(db.String(50))
@@ -44,15 +43,32 @@ class AuditLog(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- Авто-создание БД при первом запросе ---
+# --- Авто-создание БД и всех администраторов при старте ---
 @app.before_request
 def init_db_once():
     db.create_all()
+    
+    # Базовые аккаунты по умолчанию
     if not User.query.filter_by(username='admin').first():
         admin = User(username='admin', password_hash=generate_password_hash('admin123'), role='admin')
         guest = User(username='guest', password_hash=generate_password_hash('guest123'), role='guest')
         db.session.add_all([admin, guest])
         db.session.commit()
+
+    # Список новых администраторов
+    admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+    default_password_hash = generate_password_hash('Sam11sam1')
+
+    for username in admin_users:
+        if not User.query.filter_by(username=username).first():
+            new_admin = User(
+                username=username, 
+                password_hash=default_password_hash, 
+                role='admin' # Назначение роли АДМИНИСТРАТОРА
+            )
+            db.session.add(new_admin)
+    
+    db.session.commit()
 
 # --- Маршруты ---
 
@@ -126,6 +142,7 @@ def audit():
     logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).all()
     return render_template('audit.html', logs=logs)
 
-# Для локального запуска
+app = app
+
 if __name__ == '__main__':
     app.run(debug=True)
