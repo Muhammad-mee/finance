@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>История изменений (Аудит)</h3>
+<ul class="list-group mt-3">
+    {% for log in logs %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span><b>{{ log.user_name }}</b>: {{ log.action }}</span>
+        <span class="badge bg-secondary">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+    </li>
+    {% endfor %}
+</ul>
+{% endblock %}
