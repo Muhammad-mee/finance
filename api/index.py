@@ -9,13 +9,19 @@ app = Flask(__name__, template_folder='../templates')
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
-# Подключение к БД
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('POSTGRES_URL', 'sqlite:///:memory:')
+# Получаем URL базы данных
+db_url = os.environ.get('POSTGRES_URL', 'sqlite:///:memory:')
+
+# Исправляем префикс postgres:// -> postgresql:// для Flask-SQLAlchemy
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-
 # --- Модели БД ---
 
 class User(UserMixin, db.Model):
