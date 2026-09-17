@@ -9,13 +9,26 @@ app = Flask(__name__, template_folder='../templates')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
 # --- Настройка подключения к БД ---
+# Автоматический поиск URL базы данных во всех возможных переменных Vercel
 db_url = (
     os.environ.get('NEON_URL') or 
-    os.environ.get('STORAGE_URL') or 
     os.environ.get('POSTGRES_URL') or 
+    os.environ.get('POSTGRES_URL_NON_POOLING') or 
+    os.environ.get('STORAGE_URL') or 
+    os.environ.get('DATABASE_URL') or 
     ''
 )
 
+# Корректировка формата для SQLAlchemy
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+if db_url and "sslmode" not in db_url and "sqlite" not in db_url:
+    delimiter = "&" if "?" in db_url else "?"
+    db_url += f"{delimiter}sslmode=require"
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Исправление протокола postgres:// на postgresql://
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
