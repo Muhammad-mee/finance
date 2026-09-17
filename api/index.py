@@ -9,31 +9,41 @@ app = Flask(__name__, template_folder='../templates')
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
-# Получаем URL базы данных
+# --- Настройка подключения к БД ---
 db_url = os.environ.get('POSTGRES_URL', 'sqlite:///:memory:')
 
-# Исправляем префикс postgres:// -> postgresql:// для Flask-SQLAlchemy
+# Исправление протокола postgres:// на postgresql://
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
+# Добавление SSL-режима для Supabase, если его нет
+if "supabase.co" in db_url and "sslmode" not in db_url:
+    delimiter = "&" if "?" in db_url else "?"
+    db_url += f"{delimiter}sslmode=require"
+
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+
 # --- Модели БД ---
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(10), nullable=False)  # 'admin' или 'guest'
+    role = db.Column(db.String(10), nullable=False)
     avatar_url = db.Column(db.String(500), default='https://via.placeholder.com/150')
 
 class Record(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(10), nullable=False)  # 'income', 'expense', 'debt'
+    type = db.Column(db.String(10), nullable=False)
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.String(255))
     updated_by = db.Column(db.String(50))
@@ -49,32 +59,30 @@ class AuditLog(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- Авто-создание БД и всех администраторов при старте ---
+# --- Авто-создание таблиц и учетных записей ---
 @app.before_request
-def init_db_once():
-    db.create_all()
-    
-    # Базовые аккаунты по умолчанию
-    if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', password_hash=generate_password_hash('admin123'), role='admin')
-        guest = User(username='guest', password_hash=generate_password_hash('guest123'), role='guest')
-        db.session.add_all([admin, guest])
+def ensure_db_initialized():
+    try:
+        db.create_all()
+        
+        # Создаем суперадмина по умолчанию
+        if not User.query.filter_by(username='admin').first():
+            admin = User(username='admin', password_hash=generate_password_hash('admin123'), role='admin')
+            guest = User(username='guest', password_hash=generate_password_hash('guest123'), role='guest')
+            db.session.add_all([admin, guest])
+
+        # Создаем затребованных администраторов
+        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+        default_pwd = generate_password_hash('Sam11sam1')
+
+        for username in admin_users:
+            if not User.query.filter_by(username=username).first():
+                new_admin = User(username=username, password_hash=default_pwd, role='admin')
+                db.session.add(new_admin)
+        
         db.session.commit()
-
-    # Список новых администраторов
-    admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
-    default_password_hash = generate_password_hash('Sam11sam1')
-
-    for username in admin_users:
-        if not User.query.filter_by(username=username).first():
-            new_admin = User(
-                username=username, 
-                password_hash=default_password_hash, 
-                role='admin' # Назначение роли АДМИНИСТРАТОРА
-            )
-            db.session.add(new_admin)
-    
-    db.session.commit()
+    except Exception as e:
+        db.session.rollback()
 
 # --- Маршруты ---
 
@@ -149,6 +157,3 @@ def audit():
     return render_template('audit.html', logs=logs)
 
 app = app
-
-if __name__ == '__main__':
-    app.run(debug=True)
