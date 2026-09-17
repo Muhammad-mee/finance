@@ -6,22 +6,27 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, template_folder='../templates')
-
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
 # --- Настройка подключения к БД ---
-db_url = os.environ.get('NEON_URL', os.environ.get('POSTGRES_URL', ''))
+db_url = (
+    os.environ.get('NEON_URL') or 
+    os.environ.get('STORAGE_URL') or 
+    os.environ.get('POSTGRES_URL') or 
+    ''
+)
 
 # Исправление протокола postgres:// на postgresql://
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-# Добавление SSL-режима для Supabase, если его нет
-if "supabase.co" in db_url and "sslmode" not in db_url:
+# Добавление SSL-режима при необходимости
+if db_url and "sslmode" not in db_url and "sqlite" not in db_url:
     delimiter = "&" if "?" in db_url else "?"
     db_url += f"{delimiter}sslmode=require"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+# Если URL пустой, используем временную SQLite, чтобы Vercel не падал при сборке
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url if db_url else 'sqlite:///:memory:'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
@@ -59,30 +64,36 @@ class AuditLog(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- Авто-создание таблиц и учетных записей ---
-@app.before_request
-def ensure_db_initialized():
-    try:
-        db.create_all()
-        
-        # Создаем суперадмина по умолчанию
-        if not User.query.filter_by(username='admin').first():
-            admin = User(username='admin', password_hash=generate_password_hash('admin123'), role='admin')
-            guest = User(username='guest', password_hash=generate_password_hash('guest123'), role='guest')
-            db.session.add_all([admin, guest])
+# --- Первоначальная инициализация таблиц и аккаунтов ---
+def init_db():
+    with app.app_context():
+        try:
+            db.create_all()
+            
+            # Создаем системных пользователей
+            if not User.query.filter_by(username='admin').first():
+                admin = User(username='admin', password_hash=generate_password_hash('admin123'), role='admin')
+                guest = User(username='guest', password_hash=generate_password_hash('guest123'), role='guest')
+                db.session.add_all([admin, guest])
 
-        # Создаем затребованных администраторов
-        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
-        default_pwd = generate_password_hash('Sam11sam1')
+            # Создаем список администраторов
+            admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+            default_pwd = generate_password_hash('Sam11sam1')
 
-        for username in admin_users:
-            if not User.query.filter_by(username=username).first():
-                new_admin = User(username=username, password_hash=default_pwd, role='admin')
-                db.session.add(new_admin)
-        
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
+            for username in admin_users:
+                if not User.query.filter_by(username=username).first():
+                    new_admin = User(username=username, password_hash=default_pwd, role='admin')
+                    db.session.add(new_admin)
+            
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+
+# Вызов инициализации при загрузке модуля
+try:
+    init_db()
+except Exception:
+    pass
 
 # --- Маршруты ---
 
@@ -155,5 +166,3 @@ def update_avatar():
 def audit():
     logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).all()
     return render_template('audit.html', logs=logs)
-
-app = app
