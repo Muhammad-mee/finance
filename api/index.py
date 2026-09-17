@@ -10,7 +10,7 @@ app = Flask(__name__, template_folder='../templates')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
 # --- Настройка подключения к БД ---
-db_url = os.environ.get('POSTGRES_URL', 'sqlite:///:memory:')
+db_url = os.environ.get('NEON_URL', os.environ.get('POSTGRES_URL', ''))
 
 # Исправление протокола postgres:// на postgresql://
 if db_url and db_url.startswith("postgres://"):
