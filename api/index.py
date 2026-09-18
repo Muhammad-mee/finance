@@ -269,9 +269,21 @@ def edit_user(id):
 @app.route('/update_avatar', methods=['POST'])
 @login_required
 def update_avatar():
-    file = request.files.get('avatar_file')
-    if file and file.filename:
-        current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={file.filename}"
+    avatar_url = request.form.get('avatar_url')
+    avatar_file = request.files.get('avatar_file')
+
+    # 1. Если передана прямая ссылка на изображение
+    if avatar_url and avatar_url.strip():
+        current_user.avatar_url = avatar_url.strip()
         db.session.commit()
-        flash('Аватар обновлен!')
+        flash('Аватар обновлен по ссылке!')
+        return redirect(url_for('dashboard'))
+
+    # 2. Если загружен файл напрямую через форму
+    if avatar_file and avatar_file.filename:
+        # Здесь вы можете при необходимости подключить загрузку на внешнее облако (например, Cloudinary/Imgur)
+        flash('Для загрузки файлов используйте прямую URL-ссылку на фото.')
+        return redirect(url_for('dashboard'))
+
+    flash('Укажите корректную ссылку на аватар.')
     return redirect(url_for('dashboard'))
