@@ -1,17 +1,77 @@
 {% extends 'base.html' %}
+
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-4">
-        <h3 class="text-center mb-3">Вход в систему</h3>
-        <form method="POST">
-            <div class="mb-3">
-                <input type="text" name="username" class="form-control" placeholder="Имя пользователя" required>
+<!-- Метатеги для поддержки PWA (Android / iOS) -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#111827">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Финансы">
+<link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2845/2845701.png">
+
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+
+<div class="row justify-content-center align-items-center" style="min-height: 75vh;">
+    <div class="col-12 col-sm-8 col-md-5 col-lg-4">
+        <div class="card shadow-lg border-0 p-4 style-card">
+            <div class="text-center mb-4">
+                <span style="font-size: 3rem;">🔐</span>
+                <h3 class="fw-bold mt-2">Вход в систему</h3>
+                <p class="text-muted small">Введите ваши данные для входа</p>
             </div>
-            <div class="mb-3">
-                <input type="password" name="password" class="form-control" placeholder="Пароль" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Войти</button>
-        </form>
+
+            <!-- Системные уведомления (например, о неверном пароле) -->
+            {% with messages = get_flashed_messages() %}
+              {% if messages %}
+                {% for message in messages %}
+                  <div class="alert alert-danger alert-dismissible fade show p-2 small" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close p-2" data-bs-dismiss="alert"></button>
+                  </div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+
+            <form method="POST">
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold">Имя пользователя</label>
+                    <input type="text" name="username" class="form-control form-control-lg fs-6" placeholder="Введите логин" required autofocus>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold">Пароль</label>
+                    <input type="password" name="password" class="form-control form-control-lg fs-6" placeholder="Введите пароль" required>
+                </div>
+
+                <!-- Галочка сохранения сессии -->
+                <div class="form-check mb-4">
+                    <input class="form-check-input" type="checkbox" name="remember" id="remember" checked>
+                    <label class="form-check-label small text-muted" for="remember">
+                        Запомнить меня на этом устройстве
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100 fs-6 fw-bold">Войти</button>
+            </form>
+        </div>
     </div>
 </div>
+
+<style>
+    .style-card {
+        border-radius: 16px;
+        background: #ffffff;
+    }
+    
+    @media (max-width: 576px) {
+        .style-card {
+            border-radius: 12px;
+            padding: 1.5rem !important;
+        }
+    }
+</style>
 {% endblock %}
