@@ -2,13 +2,14 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Финансовый Учет</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#111827">
     <style>
-        body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f4f6f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
         .card-stat { cursor: pointer; transition: transform 0.2s; border: none; color: white; border-radius: 12px; }
         .card-stat:hover { transform: translateY(-3px); }
         
@@ -198,7 +199,8 @@
         <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <h5 class="m-0">📋 Список записей</h5>
             
-            <div class="d-flex align-items-center gap-2">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <a href="{{ url_for('export_csv') }}" class="btn btn-outline-success btn-sm">📥 Скачать отчет (CSV)</a>
                 {% if current_user.role == 'superadmin' %}
                 <div class="form-check form-switch me-2">
                     <input class="form-check-input" type="checkbox" id="showHiddenToggle" {% if show_hidden %}checked{% endif %} onchange="toggleHiddenView(this.checked)">
