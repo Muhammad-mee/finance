@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
 
-# --- Настройка подключения к БД ---
+# --- Подключение к базе данных ---
 db_url = (
     os.environ.get('DATABASE_URL') or 
     os.environ.get('POSTGRES_URL') or 
@@ -41,12 +41,12 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), default='admin')  # superadmin, admin, guest
+    role = db.Column(db.String(20), default='admin')
     avatar_url = db.Column(db.String(500), nullable=True)
 
 class Record(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(20), nullable=False)  # income, expense, debt
+    type = db.Column(db.String(20), nullable=False)
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.String(255), nullable=True)
     updated_by = db.Column(db.String(150), nullable=False)
@@ -63,41 +63,41 @@ class AuditLog(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- Инициализация БД и пользователей ---
-with app.app_context():
-    try:
-        db.create_all()
+# Безопасная инициализация таблиц и начальных пользователей без перезаписи имеющихся данных
+def init_db():
+    with app.app_context():
+        try:
+            db.create_all()
 
-        # Суперадмин по умолчанию
-        if not User.query.filter_by(username='admin').first():
-            admin = User(
-                username='admin', 
-                password=generate_password_hash('admin123', method='scrypt'), 
-                role='superadmin'
-            )
-            db.session.add(admin)
+            if not User.query.filter_by(username='admin').first():
+                admin = User(
+                    username='admin', 
+                    password=generate_password_hash('admin123', method='scrypt'), 
+                    role='superadmin'
+                )
+                db.session.add(admin)
 
-        # Гость
-        if not User.query.filter_by(username='guest').first():
-            guest = User(
-                username='guest', 
-                password=generate_password_hash('guest123', method='scrypt'), 
-                role='guest'
-            )
-            db.session.add(guest)
+            if not User.query.filter_by(username='guest').first():
+                guest = User(
+                    username='guest', 
+                    password=generate_password_hash('guest123', method='scrypt'), 
+                    role='guest'
+                )
+                db.session.add(guest)
 
-        # Администраторы
-        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
-        default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
+            admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+            default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
 
-        for username in admin_users:
-            if not User.query.filter_by(username=username).first():
-                new_admin = User(username=username, password=default_pwd, role='admin')
-                db.session.add(new_admin)
+            for username in admin_users:
+                if not User.query.filter_by(username=username).first():
+                    new_admin = User(username=username, password=default_pwd, role='admin')
+                    db.session.add(new_admin)
 
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+init_db()
 
 # --- МАРШРУТЫ И ЛОГИКА ---
 
@@ -176,7 +176,7 @@ def update_avatar():
     file = request.files.get('avatar_file')
     avatar_url = request.form.get('avatar_url')
 
-    if file:
+    if file and file.filename:
         current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={file.filename}"
     elif avatar_url:
         current_user.avatar_url = avatar_url
