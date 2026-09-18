@@ -84,18 +84,18 @@ def init_db():
         db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);"))
         db.session.commit()
 
-        # Автоматическое создание/обновление пользователя Creator (sodiqjon)
+        # Принудительно создаем или перезаписываем пароль Creator (sodiqjon)
         creator_user = User.query.filter_by(username='sodiqjon').first()
+        hashed_pw = generate_password_hash('0551410404a')  # Используем стандартный хэш Flask
+
         if not creator_user:
-            hashed_pw = generate_password_hash('0551410404a', method='scrypt')
             creator_user = User(username='sodiqjon', password=hashed_pw, role_level=3)
             db.session.add(creator_user)
-            db.session.commit()
         else:
-            if creator_user.role_level != 3:
-                creator_user.role_level = 3
-                db.session.commit()
+            creator_user.password = hashed_pw
+            creator_user.role_level = 3
 
+        db.session.commit()
         db_initialized = True
     except Exception as e:
         db.session.rollback()
