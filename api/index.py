@@ -70,45 +70,40 @@ def load_user(user_id):
     except Exception:
         return None
 
-# --- ИНИЦИАЛИЗАЦИЯ СТРУКТУРЫ И СОЗДАНИЕ CREATOR ---
-db_initialized = False
-
+# --- ИНИЦИАЛИЗАЦИЯ И МИГРАЦИИ ---
 def init_db():
-    global db_initialized
-    if db_initialized:
-        return
     try:
         db.create_all()
+        # Добавляем недостающие колонки в существующие таблицы Neon DB
         db.session.execute(text("ALTER TABLE record ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE;"))
         db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role_level INTEGER DEFAULT 0;"))
         db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);"))
         db.session.commit()
 
-        # Принудительно создаем или перезаписываем пароль Creator (sodiqjon)
+        # Принудительно проверяем и назначаем роли sodiqjon статус Creator (3)
         creator_user = User.query.filter_by(username='sodiqjon').first()
-        hashed_pw = generate_password_hash('0551410404a')  # Используем стандартный хэш Flask
-
-        if not creator_user:
-            creator_user = User(username='sodiqjon', password=hashed_pw, role_level=3)
-            db.session.add(creator_user)
+        if creator_user:
+            if creator_user.role_level != 3:
+                creator_user.role_level = 3
+                db.session.commit()
         else:
-            creator_user.password = hashed_pw
-            creator_user.role_level = 3
-
-        db.session.commit()
-        db_initialized = True
+            hashed_pw = generate_password_hash('0551410404a')
+            new_creator = User(username='sodiqjon', password=hashed_pw, role_level=3)
+            db.session.add(new_creator)
+            db.session.commit()
     except Exception as e:
         db.session.rollback()
 
 @app.before_request
 def ensure_db_init():
+    # Запускается перед каждым запросом для гарантированного обновления прав
     init_db()
 
 @app.route('/setup_db')
 def setup_db():
     try:
         init_db()
-        return "База данных успешно инициализирована! <a href='/login'>Перейти к входу</a>"
+        return "База данных успешно обновлена! <a href='/login'>Перейти к входу</a>"
     except Exception as e:
         return f"Ошибка при настройке базы данных: {str(e)}"
 
@@ -117,7 +112,7 @@ def setup_db():
 @app.route('/')
 @login_required
 def dashboard():
-    # Показывать скрытые записи может только Creator (role_level == 3)
+    # Режим скрытых записей доступен ТОЛЬКО для Creator (role_level == 3)
     show_hidden = request.args.get('show_hidden', 'false').lower() == 'true' and current_user.role_level == 3
 
     if current_user.role_level == 3 and show_hidden:
@@ -125,19 +120,20 @@ def dashboard():
     else:
         records = Record.query.filter_by(is_hidden=False).order_by(Record.updated_at.desc()).all()
 
-    income = sum(r.amount for r in records if r.type == 'income' and not r.is_hidden)
-    expense = sum(r.amount for r in records if r.type == 'expense' and not r.is_hidden)
-    debt = sum(r.amount for r in records if r.type == 'debt' and not r.is_hidden)
+    # Подсчет итоговых сумм из загруженных записей
+    income = sum(r.amount for r in records if r.type == 'income')
+    expense = sum(r.amount for r in records if r.type == 'expense')
+    debt = sum(r.amount for r in records if r.type == 'debt')
 
-    # Просмотр списка пользователей:
-    # Creator (3) видит всех пользователей (кроме себя)
-    # SuperAdmin (2) видит только Admin (1) и Guest (0)
-    # Admin (1) и Guest (0) не видят список пользователей
+    # Фильтрация списка пользователей для администрирования
     if current_user.role_level == 3:
+        # Creator (3) видит всех пользователей, кроме себя
         users = User.query.filter(User.username != current_user.username).all()
     elif current_user.role_level == 2:
+        # SuperAdmin (2) видит только Admin (1) и Guest (0)
         users = User.query.filter(User.role_level <= 1).all()
     else:
+        # Admin (1) и Guest (0) не видят список пользователей
         users = []
 
     return render_template('dashboard.html', 
@@ -172,7 +168,7 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# Добавление записей: доступно Admin (1), SuperAdmin (2), Creator (3)
+# Добавление записей: Admin (1), SuperAdmin (2), Creator (3)
 @app.route('/add_record', methods=['POST'])
 @login_required
 def add_record():
@@ -254,10 +250,10 @@ def toggle_hide_record(id):
     db.session.add(log)
 
     db.session.commit()
-    flash(f'Статус скрытия записи изменен.')
+    flash('Статус скрытия записи изменен.')
     return redirect(url_for('dashboard'))
 
-# Создание пользователей: Creator (3) может создавать любые роли; SuperAdmin (2) — только Admin (1) и Guest (0)
+# Создание пользователей: Creator (3) создает любые роли, SuperAdmin (2) — только Admin (1) и Guest (0)
 @app.route('/create_admin', methods=['POST'])
 @login_required
 def create_admin():
@@ -269,15 +265,15 @@ def create_admin():
     password = request.form.get('password')
     role_level = int(request.form.get('role_level', 1))
 
-    # Ограничения по назначению ролей:
+    # SuperAdmin (2) не может создавать SuperAdmin (2) или Creator (3)
     if current_user.role_level < 3 and role_level >= 2:
-        role_level = 1  # SuperAdmin не может создавать других SuperAdmin или Creator
+        role_level = 1
 
     if User.query.filter_by(username=username).first():
         flash('Пользователь с таким именем уже существует!')
         return redirect(url_for('dashboard'))
 
-    hashed_pw = generate_password_hash(password, method='scrypt')
+    hashed_pw = generate_password_hash(password)
     new_user = User(username=username, password=hashed_pw, role_level=role_level)
     db.session.add(new_user)
     db.session.commit()
@@ -285,7 +281,7 @@ def create_admin():
     flash(f'Пользователь {username} (роль {role_level}) успешно создан!')
     return redirect(url_for('dashboard'))
 
-# Изменение данных пользователя (логин, пароль, роль): Creator (3) может менять всех, SuperAdmin (2) — только Admin и Guest
+# Изменение данных пользователя
 @app.route('/edit_user/<int:id>', methods=['POST'])
 @login_required
 def edit_user(id):
@@ -295,7 +291,7 @@ def edit_user(id):
 
     user = User.query.get_or_404(id)
 
-    # SuperAdmin не может менять аккаунты уровня 2 и 3
+    # SuperAdmin (2) не может редактировать пользователей с role_level >= 2
     if current_user.role_level < 3 and user.role_level >= 2:
         flash('У вас нет прав на редактирование этого пользователя.')
         return redirect(url_for('dashboard'))
@@ -307,7 +303,7 @@ def edit_user(id):
     if new_username:
         user.username = new_username
     if new_password:
-        user.password = generate_password_hash(new_password, method='scrypt')
+        user.password = generate_password_hash(new_password)
     if new_role_level is not None:
         lvl = int(new_role_level)
         if current_user.role_level == 3 or lvl < 2:
@@ -332,7 +328,6 @@ def delete_user(id):
         flash('Нельзя удалить этот аккаунт!')
         return redirect(url_for('dashboard'))
 
-    # SuperAdmin не может удалять других SuperAdmin
     if current_user.role_level < 3 and user.role_level >= 2:
         flash('У вас нет прав на удаление этого пользователя.')
         return redirect(url_for('dashboard'))
@@ -375,8 +370,13 @@ def export_csv():
         headers={'Content-Disposition': 'attachment; filename=financial_report.csv'}
     )
 
+# Аудит: доступен только для SuperAdmin (2) и Creator (3)
 @app.route('/audit')
 @login_required
 def audit():
+    if current_user.role_level < 2:
+        flash('У вас нет доступа к журналу аудита.')
+        return redirect(url_for('dashboard'))
+
     logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).all()
     return render_template('audit.html', logs=logs)
