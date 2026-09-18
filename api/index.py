@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
 
-# --- Автоматический поиск подключения Neon PostgreSQL ---
+# --- Настройка подключения к Neon PostgreSQL ---
 db_url = (
     os.environ.get('DATABASE_URL') or 
     os.environ.get('POSTGRES_URL') or 
@@ -39,12 +39,12 @@ login_manager.login_view = 'login'
 
 # --- МОДЕЛИ БАЗЫ ДАННЫХ ---
 class User(UserMixin, db.Model):
-    __tablename__ = 'app_users'  # Исключаем конфликт с системными таблицами Postgres
+    __tablename__ = 'app_users'
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    role_level = db.Column(db.Integer, default=1, nullable=False) # 0: Гость, 1: Админ, 2: Супер админ, 3: Создатель
+    role_level = db.Column(db.Integer, default=1, nullable=False)
     avatar_url = db.Column(db.String(500), nullable=True)
 
 class Record(db.Model):
@@ -64,55 +64,76 @@ class AuditLog(db.Model):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    try:
+        return User.query.get(int(user_id))
+    except Exception:
+        return None
 
-# --- ИНИЦИАЛИЗАЦИЯ ПОЛЬЗОВАТЕЛЕЙ ---
+# --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
+db_initialized = False
+
 def init_db():
-    with app.app_context():
-        try:
-            db.create_all()
+    global db_initialized
+    if db_initialized:
+        return
+    try:
+        db.create_all()
 
-            # Создатель (level 3) - невидимый для всех
-            if not User.query.filter_by(username='creator').first():
-                creator = User(
-                    username='creator', 
-                    password=generate_password_hash('creator123', method='scrypt'), 
-                    role_level=3
-                )
-                db.session.add(creator)
+        # Создатель (level 3)
+        if not User.query.filter_by(username='creator').first():
+            creator = User(
+                username='creator', 
+                password=generate_password_hash('creator123', method='scrypt'), 
+                role_level=3
+            )
+            db.session.add(creator)
 
-            # Супер админ (level 2)
-            if not User.query.filter_by(username='admin').first():
-                admin = User(
-                    username='admin', 
-                    password=generate_password_hash('admin123', method='scrypt'), 
-                    role_level=2
-                )
-                db.session.add(admin)
+        # Супер админ (level 2)
+        if not User.query.filter_by(username='admin').first():
+            admin = User(
+                username='admin', 
+                password=generate_password_hash('admin123', method='scrypt'), 
+                role_level=2
+            )
+            db.session.add(admin)
 
-            # Гость (level 0)
-            if not User.query.filter_by(username='guest').first():
-                guest = User(
-                    username='guest', 
-                    password=generate_password_hash('guest123', method='scrypt'), 
-                    role_level=0
-                )
-                db.session.add(guest)
+        # Гость (level 0)
+        if not User.query.filter_by(username='guest').first():
+            guest = User(
+                username='guest', 
+                password=generate_password_hash('guest123', method='scrypt'), 
+                role_level=0
+            )
+            db.session.add(guest)
 
-            # Обычные админы (level 1)
-            admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
-            default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
+        # Обычные админы (level 1)
+        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+        default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
 
-            for username in admin_users:
-                if not User.query.filter_by(username=username).first():
-                    new_admin = User(username=username, password=default_pwd, role_level=1)
-                    db.session.add(new_admin)
+        for username in admin_users:
+            if not User.query.filter_by(username=username).first():
+                new_admin = User(username=username, password=default_pwd, role_level=1)
+                db.session.add(new_admin)
 
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+        db.session.commit()
+        db_initialized = True
+    except Exception as e:
+        db.session.rollback()
+        print(f"DB Init Error: {e}")
 
-init_db()
+@app.before_request
+def ensure_db_init():
+    init_db()
+
+# Ручной маршрут для создания всех таблиц, если база пустая
+@app.route('/setup_db')
+def setup_db():
+    try:
+        db.create_all()
+        init_db()
+        return "База данных успешно инициализирована! <a href='/login'>Перейти к входу</a>"
+    except Exception as e:
+        return f"Ошибка при настройке базы данных: {str(e)}"
 
 # --- МАРШРУТЫ И ЛОГИКА ---
 
@@ -121,7 +142,6 @@ init_db()
 def dashboard():
     show_hidden = request.args.get('show_hidden', 'false').lower() == 'true'
 
-    # Просмотр скрытых записей доступен уровням >= 2
     if current_user.role_level >= 2 and show_hidden:
         records = Record.query.order_by(Record.updated_at.desc()).all()
     else:
@@ -131,9 +151,6 @@ def dashboard():
     expense = sum(r.amount for r in records if r.type == 'expense' and not r.is_hidden)
     debt = sum(r.amount for r in records if r.type == 'debt' and not r.is_hidden)
 
-    # Защита видимости:
-    # Уровень 3 видишь только ты сам (когда вошел под уровнем 3).
-    # Для супер-админов (level 2) Создатель полностью скрыт.
     if current_user.role_level == 3:
         users = User.query.all()
     elif current_user.role_level == 2:
@@ -154,11 +171,16 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        user = User.query.filter_by(username=username).first()
+        
+        try:
+            user = User.query.filter_by(username=username).first()
+            if user and check_password_hash(user.password, password):
+                login_user(user)
+                return redirect(url_for('dashboard'))
+        except Exception as e:
+            flash(f'Ошибка БД: {str(e)}')
+            return render_template('login.html')
 
-        if user and check_password_hash(user.password, password):
-            login_user(user)
-            return redirect(url_for('dashboard'))
         flash('Неверное имя пользователя или пароль')
     return render_template('login.html')
 
@@ -264,7 +286,6 @@ def create_admin():
     password = request.form.get('password')
     role_level = int(request.form.get('role_level', 1))
 
-    # Никто кроме Создателя (level 3) не может создавать других Создателей
     if role_level >= 3 and current_user.role_level < 3:
         role_level = 2
 
@@ -287,7 +308,6 @@ def edit_user(id):
 
     user = User.query.get_or_404(id)
 
-    # Нельзя редактировать аккаунты Создателя (level 3), если ты не Создатель
     if user.role_level == 3 and current_user.role_level < 3:
         return redirect(url_for('dashboard'))
 
@@ -316,7 +336,6 @@ def delete_user(id):
 
     user = User.query.get_or_404(id)
 
-    # Создателя нельзя удалить
     if user.role_level == 3:
         return redirect(url_for('dashboard'))
 
@@ -324,6 +343,4 @@ def delete_user(id):
         db.session.delete(user)
         db.session.commit()
         flash('Пользователь удален!')
-    return redirect(url_for('dashboard'))
-
-app = app
+        return redirect(url_for('dashboard'))
