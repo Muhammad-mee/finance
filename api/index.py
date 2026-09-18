@@ -8,9 +8,13 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__, template_folder='../templates')
+# Указываем instance_path='/tmp', чтобы избежать ошибки Read-only file system на Vercel
+app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
+
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///finance.db')
+
+# База данных сохраняется во временную папку /tmp для серверлесс-среды
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:////tmp/finance.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -38,9 +42,14 @@ class Record(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Инициализация БД
+# Инициализация БД и автосоздание стандартного аккаунта
 with app.app_context():
     db.create_all()
+    if not User.query.filter_by(username='admin').first():
+        hashed_pw = generate_password_hash('admin123', method='scrypt')
+        default_admin = User(username='admin', password=hashed_pw, role='superadmin')
+        db.session.add(default_admin)
+        db.session.commit()
 
 # --- МАРШРУТЫ И ЛОГИКА ---
 
@@ -54,7 +63,6 @@ def dashboard():
     else:
         records = Record.query.filter_by(is_hidden=False).order_by(Record.updated_at.desc()).all()
 
-    # Расчет сумм (только активные записи)
     income = sum(r.amount for r in records if r.type == 'income' and not r.is_hidden)
     expense = sum(r.amount for r in records if r.type == 'expense' and not r.is_hidden)
     debt = sum(r.amount for r in records if r.type == 'debt' and not r.is_hidden)
@@ -109,11 +117,9 @@ def add_record():
 @app.route('/update_avatar', methods=['POST'])
 @login_required
 def update_avatar():
-    # Простая форма сохранения ссылки или имени файла
     file = request.files.get('avatar_file')
     if file:
         filename = secure_filename(file.filename)
-        # Для Vercel без S3 лучше хранить URL или использовать базовую заглушку
         current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={filename}"
         db.session.commit()
         flash('Аватар обновлен!')
@@ -124,7 +130,7 @@ def update_avatar():
 def export_csv():
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['ID', 'Тип', 'Сумма', 'Описание', 'Кто изминил', 'Дата'])
+    writer.writerow(['ID', 'Тип', 'Сумма', 'Описание', 'Кто изменил', 'Дата'])
 
     records = Record.query.filter_by(is_hidden=False).all()
     for r in records:
@@ -207,5 +213,4 @@ def delete_user(id):
         flash('Пользователь удален!')
     return redirect(url_for('dashboard'))
 
-# Экспорт приложения для Vercel / WSGI
 app = app
