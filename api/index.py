@@ -10,18 +10,19 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
 
-# --- Подключение к базе данных ---
+# --- Автоматический поиск подключения Neon PostgreSQL ---
 db_url = (
     os.environ.get('DATABASE_URL') or 
     os.environ.get('POSTGRES_URL') or 
-    os.environ.get('POSTGRES_URL_NON_POOLING') or 
+    os.environ.get('NEON_DATABASE_URL') or 
+    os.environ.get('NEON_URL') or 
     'sqlite:////tmp/finance.db'
 )
 
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-if "supabase.co" in db_url and "sslmode" not in db_url:
+if ("neon.tech" in db_url or "supabase.co" in db_url) and "sslmode" not in db_url:
     delimiter = "&" if "?" in db_url else "?"
     db_url += f"{delimiter}sslmode=require"
 
@@ -38,10 +39,12 @@ login_manager.login_view = 'login'
 
 # --- МОДЕЛИ БАЗЫ ДАННЫХ ---
 class User(UserMixin, db.Model):
+    __tablename__ = 'app_users'  # Исключаем конфликт с системными таблицами Postgres
+
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), default='admin')
+    role_level = db.Column(db.Integer, default=1, nullable=False) # 0: Гость, 1: Админ, 2: Супер админ, 3: Создатель
     avatar_url = db.Column(db.String(500), nullable=True)
 
 class Record(db.Model):
@@ -63,34 +66,46 @@ class AuditLog(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Безопасная инициализация таблиц и начальных пользователей без перезаписи имеющихся данных
+# --- ИНИЦИАЛИЗАЦИЯ ПОЛЬЗОВАТЕЛЕЙ ---
 def init_db():
     with app.app_context():
         try:
             db.create_all()
 
+            # Создатель (level 3) - невидимый для всех
+            if not User.query.filter_by(username='creator').first():
+                creator = User(
+                    username='creator', 
+                    password=generate_password_hash('creator123', method='scrypt'), 
+                    role_level=3
+                )
+                db.session.add(creator)
+
+            # Супер админ (level 2)
             if not User.query.filter_by(username='admin').first():
                 admin = User(
                     username='admin', 
                     password=generate_password_hash('admin123', method='scrypt'), 
-                    role='superadmin'
+                    role_level=2
                 )
                 db.session.add(admin)
 
+            # Гость (level 0)
             if not User.query.filter_by(username='guest').first():
                 guest = User(
                     username='guest', 
                     password=generate_password_hash('guest123', method='scrypt'), 
-                    role='guest'
+                    role_level=0
                 )
                 db.session.add(guest)
 
+            # Обычные админы (level 1)
             admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
             default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
 
             for username in admin_users:
                 if not User.query.filter_by(username=username).first():
-                    new_admin = User(username=username, password=default_pwd, role='admin')
+                    new_admin = User(username=username, password=default_pwd, role_level=1)
                     db.session.add(new_admin)
 
             db.session.commit()
@@ -106,7 +121,8 @@ init_db()
 def dashboard():
     show_hidden = request.args.get('show_hidden', 'false').lower() == 'true'
 
-    if current_user.role == 'superadmin' and show_hidden:
+    # Просмотр скрытых записей доступен уровням >= 2
+    if current_user.role_level >= 2 and show_hidden:
         records = Record.query.order_by(Record.updated_at.desc()).all()
     else:
         records = Record.query.filter_by(is_hidden=False).order_by(Record.updated_at.desc()).all()
@@ -115,7 +131,15 @@ def dashboard():
     expense = sum(r.amount for r in records if r.type == 'expense' and not r.is_hidden)
     debt = sum(r.amount for r in records if r.type == 'debt' and not r.is_hidden)
 
-    users = User.query.all() if current_user.role == 'superadmin' else []
+    # Защита видимости:
+    # Уровень 3 видишь только ты сам (когда вошел под уровнем 3).
+    # Для супер-админов (level 2) Создатель полностью скрыт.
+    if current_user.role_level == 3:
+        users = User.query.all()
+    elif current_user.role_level == 2:
+        users = User.query.filter(User.role_level < 3).all()
+    else:
+        users = []
 
     return render_template('dashboard.html', 
                            records=records, 
@@ -147,7 +171,7 @@ def logout():
 @app.route('/add_record', methods=['POST'])
 @login_required
 def add_record():
-    if current_user.role == 'guest':
+    if current_user.role_level < 1:
         flash('У гостей нет прав добавления записей!')
         return redirect(url_for('dashboard'))
 
@@ -212,7 +236,7 @@ def audit():
 @app.route('/toggle_hide_record/<int:id>', methods=['POST'])
 @login_required
 def toggle_hide_record(id):
-    if current_user.role != 'superadmin':
+    if current_user.role_level < 2:
         return redirect(url_for('dashboard'))
     rec = Record.query.get_or_404(id)
     rec.is_hidden = not rec.is_hidden
@@ -222,7 +246,7 @@ def toggle_hide_record(id):
 @app.route('/delete_record/<int:id>', methods=['POST'])
 @login_required
 def delete_record(id):
-    if current_user.role != 'superadmin':
+    if current_user.role_level < 2:
         return redirect(url_for('dashboard'))
     rec = Record.query.get_or_404(id)
     db.session.delete(rec)
@@ -233,18 +257,23 @@ def delete_record(id):
 @app.route('/create_admin', methods=['POST'])
 @login_required
 def create_admin():
-    if current_user.role != 'superadmin':
+    if current_user.role_level < 2:
         return redirect(url_for('dashboard'))
+
     username = request.form.get('username')
     password = request.form.get('password')
-    role = request.form.get('role', 'admin')
+    role_level = int(request.form.get('role_level', 1))
+
+    # Никто кроме Создателя (level 3) не может создавать других Создателей
+    if role_level >= 3 and current_user.role_level < 3:
+        role_level = 2
 
     if User.query.filter_by(username=username).first():
         flash('Пользователь уже существует!')
         return redirect(url_for('dashboard'))
 
     hashed_pw = generate_password_hash(password, method='scrypt')
-    new_user = User(username=username, password=hashed_pw, role=role)
+    new_user = User(username=username, password=hashed_pw, role_level=role_level)
     db.session.add(new_user)
     db.session.commit()
     flash('Пользователь успешно создан!')
@@ -253,16 +282,28 @@ def create_admin():
 @app.route('/edit_user/<int:id>', methods=['POST'])
 @login_required
 def edit_user(id):
-    if current_user.role != 'superadmin':
+    if current_user.role_level < 2:
         return redirect(url_for('dashboard'))
+
     user = User.query.get_or_404(id)
+
+    # Нельзя редактировать аккаунты Создателя (level 3), если ты не Создатель
+    if user.role_level == 3 and current_user.role_level < 3:
+        return redirect(url_for('dashboard'))
+
     new_username = request.form.get('username')
     new_password = request.form.get('password')
+    new_role_level = request.form.get('role_level')
 
     if new_username:
         user.username = new_username
     if new_password:
         user.password = generate_password_hash(new_password, method='scrypt')
+    if new_role_level is not None:
+        lvl = int(new_role_level)
+        if lvl < 3 or current_user.role_level == 3:
+            user.role_level = lvl
+
     db.session.commit()
     flash('Данные пользователя обновлены!')
     return redirect(url_for('dashboard'))
@@ -270,9 +311,15 @@ def edit_user(id):
 @app.route('/delete_user/<int:id>', methods=['POST'])
 @login_required
 def delete_user(id):
-    if current_user.role != 'superadmin':
+    if current_user.role_level < 2:
         return redirect(url_for('dashboard'))
+
     user = User.query.get_or_404(id)
+
+    # Создателя нельзя удалить
+    if user.role_level == 3:
+        return redirect(url_for('dashboard'))
+
     if user.username != current_user.username:
         db.session.delete(user)
         db.session.commit()
