@@ -11,7 +11,7 @@ from sqlalchemy import text
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
 
-# --- Настройка подключения к Neon PostgreSQL / SQLite ---
+# --- Подключение к базе данных ---
 db_url = (
     os.environ.get('DATABASE_URL') or 
     os.environ.get('POSTGRES_URL') or 
@@ -38,10 +38,9 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# --- МОДЕЛИ БАЗЫ ДАННЫХ ---
+# --- Модели БД ---
 class User(UserMixin, db.Model):
     __tablename__ = 'app_users'
-
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
@@ -70,17 +69,14 @@ def load_user(user_id):
     except Exception:
         return None
 
-# --- ИНИЦИАЛИЗАЦИЯ И МИГРАЦИИ ---
 def init_db():
     try:
         db.create_all()
-        # Добавляем недостающие колонки в существующие таблицы Neon DB
         db.session.execute(text("ALTER TABLE record ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE;"))
         db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role_level INTEGER DEFAULT 0;"))
         db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);"))
         db.session.commit()
 
-        # Принудительно проверяем и назначаем роли sodiqjon статус Creator (3)
         creator_user = User.query.filter_by(username='sodiqjon').first()
         if creator_user:
             if creator_user.role_level != 3:
@@ -96,23 +92,11 @@ def init_db():
 
 @app.before_request
 def ensure_db_init():
-    # Запускается перед каждым запросом для гарантированного обновления прав
     init_db()
-
-@app.route('/setup_db')
-def setup_db():
-    try:
-        init_db()
-        return "База данных успешно обновлена! <a href='/login'>Перейти к входу</a>"
-    except Exception as e:
-        return f"Ошибка при настройке базы данных: {str(e)}"
-
-# --- МАРШРУТЫ И ЛОГИКА ---
 
 @app.route('/')
 @login_required
 def dashboard():
-    # Режим скрытых записей доступен ТОЛЬКО для Creator (role_level == 3)
     show_hidden = request.args.get('show_hidden', 'false').lower() == 'true' and current_user.role_level == 3
 
     if current_user.role_level == 3 and show_hidden:
@@ -120,20 +104,16 @@ def dashboard():
     else:
         records = Record.query.filter_by(is_hidden=False).order_by(Record.updated_at.desc()).all()
 
-    # Подсчет итоговых сумм из загруженных записей
+    # Суммы считаются только повидимым записям (если не включен показ скрытых)
     income = sum(r.amount for r in records if r.type == 'income')
     expense = sum(r.amount for r in records if r.type == 'expense')
     debt = sum(r.amount for r in records if r.type == 'debt')
 
-    # Фильтрация списка пользователей для администрирования
     if current_user.role_level == 3:
-        # Creator (3) видит всех пользователей, кроме себя
         users = User.query.filter(User.username != current_user.username).all()
     elif current_user.role_level == 2:
-        # SuperAdmin (2) видит только Admin (1) и Guest (0)
         users = User.query.filter(User.role_level <= 1).all()
     else:
-        # Admin (1) и Guest (0) не видят список пользователей
         users = []
 
     return render_template('dashboard.html', 
@@ -149,7 +129,6 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        
         try:
             user = User.query.filter_by(username=username).first()
             if user and check_password_hash(user.password, password):
@@ -158,7 +137,6 @@ def login():
         except Exception as e:
             flash(f'Ошибка входа: {str(e)}')
             return render_template('login.html')
-
         flash('Неверное имя пользователя или пароль')
     return render_template('login.html')
 
@@ -168,12 +146,11 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# Добавление записей: Admin (1), SuperAdmin (2), Creator (3)
 @app.route('/add_record', methods=['POST'])
 @login_required
 def add_record():
     if current_user.role_level < 1:
-        flash('У вас нет прав для добавления записей (роль Guest).')
+        flash('У вас нет прав для добавления записей.')
         return redirect(url_for('dashboard'))
 
     rec_type = request.form.get('type')
@@ -187,20 +164,16 @@ def add_record():
         updated_by=current_user.username
     )
     db.session.add(new_rec)
-
-    log = AuditLog(action=f"Добавлено {rec_type}: {amount} ({description})", user_name=current_user.username)
-    db.session.add(log)
-
     db.session.commit()
     flash('Запись успешно добавлена!')
     return redirect(url_for('dashboard'))
 
-# Редактирование записи: SuperAdmin (2) и Creator (3)
+# Редактирование: разрешено SuperAdmin (2) и Creator (3)
 @app.route('/edit_record/<int:id>', methods=['POST'])
 @login_required
 def edit_record(id):
     if current_user.role_level < 2:
-        flash('Недостаточно прав для редактирования записей.')
+        flash('Недостаточно прав.')
         return redirect(url_for('dashboard'))
 
     rec = Record.query.get_or_404(id)
@@ -209,68 +182,56 @@ def edit_record(id):
     rec.description = request.form.get('description', rec.description)
     rec.updated_by = current_user.username
 
-    log = AuditLog(action=f"Изменена запись ID {rec.id}", user_name=current_user.username)
-    db.session.add(log)
-
     db.session.commit()
-    flash('Запись изменена.')
+    flash('Запись успешно обновлена.')
     return redirect(url_for('dashboard'))
 
-# Удаление записи: SuperAdmin (2) и Creator (3)
+# Удаление: разрешено ТОЛЬКО Creator (3 / sodiqjon)
 @app.route('/delete_record/<int:id>', methods=['POST'])
 @login_required
 def delete_record(id):
-    if current_user.role_level < 2:
-        flash('Недостаточно прав для удаления записей.')
+    if current_user.role_level < 3:
+        flash('Только Creator (sodiqjon) имеет право удалять записи!')
         return redirect(url_for('dashboard'))
 
     rec = Record.query.get_or_404(id)
     db.session.delete(rec)
-
-    log = AuditLog(action=f"Удалена запись ID {id}", user_name=current_user.username)
-    db.session.add(log)
-
     db.session.commit()
-    flash('Запись удалена.')
+    flash('Запись безвозвратно удалена.')
     return redirect(url_for('dashboard'))
 
-# Скрытие / Раскрытие записи: Только Creator (3)
+# Скрытие / Восстановление: разрешено SuperAdmin (2) и Creator (3)
 @app.route('/toggle_hide_record/<int:id>', methods=['POST'])
 @login_required
 def toggle_hide_record(id):
-    if current_user.role_level < 3:
-        flash('Только Creator может скрывать или показывать записи.')
+    if current_user.role_level < 2:
+        flash('Недостаточно прав для этой операции.')
         return redirect(url_for('dashboard'))
 
     rec = Record.query.get_or_404(id)
     rec.is_hidden = not rec.is_hidden
-
-    action_str = "Скрыта" if rec.is_hidden else "Восстановлена"
-    log = AuditLog(action=f"{action_str} запись ID {id}", user_name=current_user.username)
-    db.session.add(log)
-
     db.session.commit()
-    flash('Статус скрытия записи изменен.')
+
+    status = "скрыта" if rec.is_hidden else "восстановлена"
+    flash(f'Запись #{rec.id} {status}.')
     return redirect(url_for('dashboard'))
 
-# Создание пользователей: Creator (3) создает любые роли, SuperAdmin (2) — только Admin (1) и Guest (0)
 @app.route('/create_admin', methods=['POST'])
 @login_required
 def create_admin():
     if current_user.role_level < 2:
-        flash('Недостаточно прав для создания пользователей.')
+        flash('Недостаточно прав.')
         return redirect(url_for('dashboard'))
 
     username = request.form.get('username')
     password = request.form.get('password')
     role_level = int(request.form.get('role_level', 1))
 
-    # SuperAdmin (2) не может создавать SuperAdmin (2) или Creator (3)
     if current_user.role_level < 3 and role_level >= 2:
         role_level = 1
 
     if User.query.filter_by(username=username).first():
-        flash('Пользователь с таким именем уже существует!')
+        flash('Пользователь уже существует!')
         return redirect(url_for('dashboard'))
 
     hashed_pw = generate_password_hash(password)
@@ -278,105 +239,39 @@ def create_admin():
     db.session.add(new_user)
     db.session.commit()
 
-    flash(f'Пользователь {username} (роль {role_level}) успешно создан!')
+    flash(f'Пользователь {username} создан!')
     return redirect(url_for('dashboard'))
 
-# Изменение данных пользователя
 @app.route('/edit_user/<int:id>', methods=['POST'])
 @login_required
 def edit_user(id):
-    if current_user.role_level < 2:
-        flash('Недостаточно прав для управления пользователями.')
-        return redirect(url_for('dashboard'))
-
-    user = User.query.get_or_404(id)
-
-    # SuperAdmin (2) не может редактировать пользователей с role_level >= 2
-    if current_user.role_level < 3 and user.role_level >= 2:
-        flash('У вас нет прав на редактирование этого пользователя.')
-        return redirect(url_for('dashboard'))
-
-    new_username = request.form.get('username')
-    new_password = request.form.get('password')
-    new_role_level = request.form.get('role_level')
-
-    if new_username:
-        user.username = new_username
-    if new_password:
-        user.password = generate_password_hash(new_password)
-    if new_role_level is not None:
-        lvl = int(new_role_level)
-        if current_user.role_level == 3 or lvl < 2:
-            user.role_level = lvl
-
-    db.session.commit()
-    flash(f'Данные пользователя {user.username} обновлены!')
-    return redirect(url_for('dashboard'))
-
-# Удаление пользователя
-@app.route('/delete_user/<int:id>', methods=['POST'])
-@login_required
-def delete_user(id):
     if current_user.role_level < 2:
         flash('Недостаточно прав.')
         return redirect(url_for('dashboard'))
 
     user = User.query.get_or_404(id)
-
-    # Нельзя удалить сам себя или Creator
-    if user.username == current_user.username or user.role_level == 3:
-        flash('Нельзя удалить этот аккаунт!')
-        return redirect(url_for('dashboard'))
-
     if current_user.role_level < 3 and user.role_level >= 2:
-        flash('У вас нет прав на удаление этого пользователя.')
+        flash('Нет прав для изменения этого пользователя.')
         return redirect(url_for('dashboard'))
 
-    db.session.delete(user)
+    new_username = request.form.get('username')
+    new_password = request.form.get('password')
+
+    if new_username:
+        user.username = new_username
+    if new_password:
+        user.password = generate_password_hash(new_password)
+
     db.session.commit()
-    flash('Пользователь удален!')
+    flash('Данные пользователя обновлены!')
     return redirect(url_for('dashboard'))
 
 @app.route('/update_avatar', methods=['POST'])
 @login_required
 def update_avatar():
     file = request.files.get('avatar_file')
-    avatar_url = request.form.get('avatar_url')
-
     if file and file.filename:
         current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={file.filename}"
-    elif avatar_url:
-        current_user.avatar_url = avatar_url
-
-    db.session.commit()
-    flash('Аватар обновлен!')
+        db.session.commit()
+        flash('Аватар обновлен!')
     return redirect(url_for('dashboard'))
-
-@app.route('/export_csv')
-@login_required
-def export_csv():
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['ID', 'Тип', 'Сумма', 'Описание', 'Кто изменил', 'Дата'])
-
-    records = Record.query.filter_by(is_hidden=False).all()
-    for r in records:
-        writer.writerow([r.id, r.type, r.amount, r.description or '', r.updated_by, r.updated_at.strftime('%Y-%m-%d %H:%M')])
-
-    output.seek(0)
-    return Response(
-        output.getvalue(),
-        mimetype='text/csv; charset=utf-8-sig',
-        headers={'Content-Disposition': 'attachment; filename=financial_report.csv'}
-    )
-
-# Аудит: доступен только для SuperAdmin (2) и Creator (3)
-@app.route('/audit')
-@login_required
-def audit():
-    if current_user.role_level < 2:
-        flash('У вас нет доступа к журналу аудита.')
-        return redirect(url_for('dashboard'))
-
-    logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).all()
-    return render_template('audit.html', logs=logs)
