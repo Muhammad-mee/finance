@@ -48,7 +48,8 @@
         .tr-income { border-left: 5px solid #198754; }
         .tr-expense { border-left: 5px solid #dc3545; }
         .tr-debt { border-left: 5px solid #ffc107; }
-        
+        .tr-hidden { opacity: 0.55; background-color: #f0f0f0; }
+
         .avatar-img { 
             width: 45px; 
             height: 45px; 
@@ -61,6 +62,16 @@
             width: 100%;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
+        }
+
+        .btn-three-dots {
+            background: transparent;
+            border: none;
+            font-size: 1.3rem;
+            font-weight: bold;
+            line-height: 1;
+            padding: 2px 8px;
+            cursor: pointer;
         }
 
         @media (max-width: 576px) {
@@ -81,11 +92,6 @@
                 margin-top: 5px;
             }
             .form-control, .form-select { font-size: 0.9rem; }
-        }
-
-        @media (min-width: 577px) and (max-width: 768px) {
-            .card-stat h3 { font-size: 1.6rem; }
-            .table th, .table td { font-size: 0.9rem; }
         }
     </style>
 </head>
@@ -123,29 +129,29 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Сводные карточки -->
+    <!-- Карточки статистики -->
     <div class="row g-3 mb-4">
         <div class="col-md-4">
-            <div class="card card-stat bg-income p-3 text-center shadow-sm" onclick="filterType('income')" title="Нажмите, чтобы показать только доходы">
+            <div class="card card-stat bg-income p-3 text-center shadow-sm" onclick="filterType('income')" title="Показать только доходы">
                 <h5>Доход</h5>
                 <h3>{{ income }}</h3>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="card card-stat bg-expense p-3 text-center shadow-sm" onclick="filterType('expense')" title="Нажмите, чтобы показать только затраты">
+            <div class="card card-stat bg-expense p-3 text-center shadow-sm" onclick="filterType('expense')" title="Показать только затраты">
                 <h5>Затраты</h5>
                 <h3>{{ expense }}</h3>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="card card-stat bg-debt p-3 text-center shadow-sm" onclick="filterType('debt')" title="Нажмите, чтобы показать только долги">
+            <div class="card card-stat bg-debt p-3 text-center shadow-sm" onclick="filterType('debt')" title="Показать только долги">
                 <h5>Долги</h5>
                 <h3>{{ debt }}</h3>
             </div>
         </div>
     </div>
 
-    <!-- Ввод данных и загрузка аватарки -->
+    <!-- Блок ввода данных и загрузки аватарки -->
     <div class="row g-3 mb-4">
         <div class="col-lg-8">
             <div class="card p-3 shadow-sm border-0">
@@ -182,7 +188,7 @@
         </div>
     </div>
 
-    <!-- Панель управления пользователями (Видна для SuperAdmin [2] и Creator [3]) -->
+    <!-- Управление аккаунтами (SuperAdmin и Creator) -->
     {% if current_user.role_level and current_user.role_level >= 2 %}
     <div class="card p-3 mb-4 shadow-sm border-danger">
         <h5 class="text-danger mb-3">👑 Панель Управления Аккаунтами</h5>
@@ -205,7 +211,7 @@
                     <tr>
                         <th>ID</th>
                         <th>Имя</th>
-                        <th>Уровень роли</th>
+                        <th>Роль</th>
                         <th>Изменить данные</th>
                     </tr>
                 </thead>
@@ -230,11 +236,21 @@
     </div>
     {% endif %}
 
-    <!-- Таблица записей с фильтрацией -->
+    <!-- Таблица записей -->
     <div class="card p-3 shadow-sm border-0 mb-5">
         <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <h5 class="m-0">📋 Список записей</h5>
-            <button class="btn btn-outline-secondary btn-sm" onclick="filterType('all')">Показать все записи</button>
+            <div class="d-flex gap-2">
+                <!-- Кнопка "Скрытые" доступна ТОЛЬКО для sodiqjon (Creator / role_level == 3) -->
+                {% if current_user.role_level == 3 %}
+                    {% if show_hidden %}
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-warning btn-sm">🙈 Скрыть скрытые</a>
+                    {% else %}
+                        <a href="{{ url_for('dashboard', show_hidden='true') }}" class="btn btn-outline-warning btn-sm">👁️ Скрытые записи</a>
+                    {% endif %}
+                {% endif %}
+                <button class="btn btn-outline-secondary btn-sm" onclick="filterType('all')">Показать все</button>
+            </div>
         </div>
         
         <div class="table-responsive">
@@ -246,26 +262,102 @@
                         <th>Описание</th>
                         <th>Кто изменил</th>
                         <th>Дата</th>
-                        {% if current_user.role_level and current_user.role_level >= 2 %}<th>Действие</th>{% endif %}
+                        {% if current_user.role_level and current_user.role_level >= 2 %}
+                            <th class="text-end">Действия</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody id="records-table">
                     {% for r in records %}
-                    <tr class="record-row tr-{{ r.type }}" data-type="{{ r.type }}">
+                    <tr class="record-row tr-{{ r.type }} {% if r.is_hidden %}tr-hidden{% endif %}" data-type="{{ r.type }}">
                         <td>
                             {% if r.type == 'income' %}<span class="badge-income">Доход</span>{% endif %}
                             {% if r.type == 'expense' %}<span class="badge-expense">Затраты</span>{% endif %}
                             {% if r.type == 'debt' %}<span class="badge-debt">Долг</span>{% endif %}
+                            {% if r.is_hidden %}<span class="badge bg-secondary ms-1">Скрыто</span>{% endif %}
                         </td>
                         <td><strong>{{ r.amount }}</strong></td>
                         <td>{{ r.description or '-' }}</td>
                         <td><strong>{{ r.updated_by }}</strong></td>
                         <td>{{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+
                         {% if current_user.role_level and current_user.role_level >= 2 %}
-                        <td>
-                            <form action="{{ url_for('delete_record', id=r.id) }}" method="POST" onsubmit="return confirm('Удалить эту запись?');">
-                                <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
-                            </form>
+                        <td class="text-end">
+                            <!-- Выпадающее меню "3 точки" -->
+                            <div class="dropdown d-inline-block">
+                                <button class="btn-three-dots" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                    ⋮
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end shadow">
+                                    <!-- 1. Изменить запись (SuperAdmin и sodiqjon) -->
+                                    <li>
+                                        <button class="dropdown-menu-item dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#editModal{{ r.id }}">
+                                            ✏️ Редактировать
+                                        </button>
+                                    </li>
+
+                                    <!-- 2. Скрыть / Восстановить (SuperAdmin и sodiqjon) -->
+                                    <li>
+                                        <form action="{{ url_for('toggle_hide_record', id=r.id) }}" method="POST" class="d-inline">
+                                            <button type="submit" class="dropdown-item">
+                                                {% if r.is_hidden %}
+                                                    👁️ Восстановить
+                                                {% else %}
+                                                    🙈 Скрыть
+                                                {% endif %}
+                                            </button>
+                                        </form>
+                                    </li>
+
+                                    <!-- 3. Удалить (ТОЛЬКО для sodiqjon / role_level == 3) -->
+                                    {% if current_user.role_level == 3 %}
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li>
+                                        <form action="{{ url_for('delete_record', id=r.id) }}" method="POST" onsubmit="return confirm('Удалить эту запись навсегда?');">
+                                            <button type="submit" class="dropdown-item text-danger">
+                                                🗑️ Удалить
+                                            </button>
+                                        </form>
+                                    </li>
+                                    {% endif %}
+                                </ul>
+                            </div>
+
+                            <!-- Модальное окно редактирования для этой записи -->
+                            <div class="modal fade" id="editModal{{ r.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content text-start">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Редактировать запись #{{ r.id }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form action="{{ url_for('edit_record', id=r.id) }}" method="POST">
+                                            <div class="modal-body">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Тип</label>
+                                                    <select name="type" class="form-select" required>
+                                                        <option value="income" {% if r.type == 'income' %}selected{% endif %}>Доход</option>
+                                                        <option value="expense" {% if r.type == 'expense' %}selected{% endif %}>Затраты</option>
+                                                        <option value="debt" {% if r.type == 'debt' %}selected{% endif %}>Долг</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Сумма</label>
+                                                    <input type="number" step="any" name="amount" class="form-control" value="{{ r.amount }}" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Описание</label>
+                                                    <input type="text" name="description" class="form-control" value="{{ r.description or '' }}">
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                                                <button type="submit" class="btn btn-primary btn-sm">Сохранить изменения</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
                         </td>
                         {% endif %}
                     </tr>
