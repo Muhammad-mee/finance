@@ -1,15 +1,20 @@
 import os
 import base64
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__, template_folder='../templates')
+app = Flask(__name__, template_folder='../templates', static_folder='../static')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-it')
 
-# Настройка БД
+# Настройка сохранения входа (не нужно вводить логин и пароль каждый раз)
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_REFRESH_EACH_REQUEST'] = True
+
+# Настройка подключения к БД
 db_url = (
     os.environ.get('NEON_URL') or 
     os.environ.get('POSTGRES_URL') or 
@@ -37,7 +42,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(20), nullable=False) # superadmin, admin, guest
+    role = db.Column(db.String(20), nullable=False) # superadmin, admin
     avatar_url = db.Column(db.Text, default='https://via.placeholder.com/150')
 
 class Record(db.Model):
@@ -65,11 +70,9 @@ def init_db():
             db.create_all()
             pwd = generate_password_hash('Sam11sam1')
             
-            # Создаем Суперадмина
             if not User.query.filter_by(username='superadmin').first():
                 db.session.add(User(username='superadmin', password_hash=pwd, role='superadmin'))
 
-            # Создаем стандартных админов
             admins = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
             for name in admins:
                 if not User.query.filter_by(username=name).first():
@@ -84,13 +87,26 @@ try:
 except Exception:
     pass
 
+# Раздача файлов для PWA
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory('../static', 'manifest.json')
+
+@app.route('/sw.js')
+def service_worker():
+    return send_from_directory('../static', 'sw.js')
+
 # Маршруты
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
     if request.method == 'POST':
         user = User.query.filter_by(username=request.form['username']).first()
         if user and check_password_hash(user.password_hash, request.form['password']):
-            login_user(user)
+            # remember=True сохраняет сессию даже при закрытии браузера/приложения
+            login_user(user, remember=True)
             return redirect(url_for('dashboard'))
         flash('Неверное имя пользователя или пароль')
     return render_template('login.html')
@@ -159,7 +175,6 @@ def delete_record(id):
 def update_avatar():
     file = request.files.get('avatar_file')
     if file and file.filename != '':
-        # Конвертация изображения в Base64 строку для сохранения в БД Vercel
         encoded = base64.b64encode(file.read()).decode('utf-8')
         mime = file.mimetype or 'image/png'
         current_user.avatar_url = f"data:{mime};base64,{encoded}"
@@ -169,7 +184,6 @@ def update_avatar():
         flash('Выберите файл изображения!')
     return redirect(url_for('dashboard'))
 
-# Маршруты управления пользователями для Суперадмина
 @app.route('/create_admin', methods=['POST'])
 @login_required
 def create_admin():
