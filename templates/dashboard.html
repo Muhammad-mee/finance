@@ -178,15 +178,14 @@
         </div>
 
         <div class="col-lg-4">
-            <div class="card p-3 shadow-sm border-0">
-                <h5 class="mb-3">🖼️ Загрузить аватарку</h5>
-                <form action="{{ url_for('update_avatar') }}" method="POST" enctype="multipart/form-data">
-                    <input type="file" name="avatar_file" accept="image/*" class="form-control mb-2" required>
-                    <button type="submit" class="btn btn-primary btn-sm w-100 btn-mobile-full">Изменить фото</button>
-                </form>
-            </div>
-        </div>
+    <div class="card p-3 shadow-sm border-0">
+        <h5 class="mb-3">🖼️ Ссылка на аватарку</h5>
+        <form action="{{ url_for('update_avatar') }}" method="POST">
+            <input type="url" name="avatar_url" class="form-control mb-2" placeholder="https://..." required>
+            <button type="submit" class="btn btn-primary btn-sm w-100 btn-mobile-full">Сохранить фото</button>
+        </form>
     </div>
+</div>
 
     <!-- Управление аккаунтами (SuperAdmin и Creator) -->
     {% if current_user.role_level and current_user.role_level >= 2 %}
