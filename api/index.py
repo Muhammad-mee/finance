@@ -6,6 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, Res
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import text
 
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
@@ -69,7 +70,7 @@ def load_user(user_id):
     except Exception:
         return None
 
-# --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
+# --- АВТОМАТИЧЕСКАЯ ИНИЦИАЛИЗАЦИЯ СТРУКТУРЫ ---
 db_initialized = False
 
 def init_db():
@@ -78,60 +79,24 @@ def init_db():
         return
     try:
         db.create_all()
-
-        # Создатель (level 3)
-        if not User.query.filter_by(username='creator').first():
-            creator = User(
-                username='creator', 
-                password=generate_password_hash('creator123', method='scrypt'), 
-                role_level=3
-            )
-            db.session.add(creator)
-
-        # Супер админ (level 2)
-        if not User.query.filter_by(username='admin').first():
-            admin = User(
-                username='admin', 
-                password=generate_password_hash('admin123', method='scrypt'), 
-                role_level=2
-            )
-            db.session.add(admin)
-
-        # Гость (level 0)
-        if not User.query.filter_by(username='guest').first():
-            guest = User(
-                username='guest', 
-                password=generate_password_hash('guest123', method='scrypt'), 
-                role_level=0
-            )
-            db.session.add(guest)
-
-        # Обычные админы (level 1)
-        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
-        default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
-
-        for username in admin_users:
-            if not User.query.filter_by(username=username).first():
-                new_admin = User(username=username, password=default_pwd, role_level=1)
-                db.session.add(new_admin)
-
+        # Автоматическое добавление отсутствующих колонок в таблицу record и app_users
+        db.session.execute(text("ALTER TABLE record ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE;"))
+        db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role_level INTEGER DEFAULT 1;"))
+        db.session.execute(text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);"))
         db.session.commit()
         db_initialized = True
     except Exception as e:
         db.session.rollback()
-        print(f"DB Init Error: {e}")
 
 @app.before_request
 def ensure_db_init():
     init_db()
 
-# Ручной маршрут для создания всех таблиц, если база пустая
 @app.route('/setup_db')
 def setup_db():
     try:
-        db.create_all()
         init_db()
-        return "База данных успешно инициализирована! <a href='/login'>Перейти к входу</a>"
+        return "Структура таблиц обновлена! <a href='/login'>Перейти к входу</a>"
     except Exception as e:
         return f"Ошибка при настройке базы данных: {str(e)}"
 
