@@ -6,16 +6,31 @@ from flask import Flask, render_template, request, redirect, url_for, flash, Res
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
 
-# Указываем instance_path='/tmp', чтобы избежать ошибки Read-only file system на Vercel
 app = Flask(__name__, template_folder='../templates', instance_path='/tmp')
-
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-123')
 
-# База данных сохраняется во временную папку /tmp для серверлесс-среды
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:////tmp/finance.db')
+# --- Настройка подключения к БД ---
+db_url = (
+    os.environ.get('DATABASE_URL') or 
+    os.environ.get('POSTGRES_URL') or 
+    os.environ.get('POSTGRES_URL_NON_POOLING') or 
+    'sqlite:////tmp/finance.db'
+)
+
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+if "supabase.co" in db_url and "sslmode" not in db_url:
+    delimiter = "&" if "?" in db_url else "?"
+    db_url += f"{delimiter}sslmode=require"
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -26,7 +41,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), default='admin')  # admin или superadmin
+    role = db.Column(db.String(20), default='admin')  # superadmin, admin, guest
     avatar_url = db.Column(db.String(500), nullable=True)
 
 class Record(db.Model):
@@ -38,18 +53,51 @@ class Record(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_hidden = db.Column(db.Boolean, default=False)
 
+class AuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    action = db.Column(db.String(255), nullable=False)
+    user_name = db.Column(db.String(150), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Инициализация БД и автосоздание стандартного аккаунта
+# --- Инициализация БД и пользователей ---
 with app.app_context():
-    db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        hashed_pw = generate_password_hash('admin123', method='scrypt')
-        default_admin = User(username='admin', password=hashed_pw, role='superadmin')
-        db.session.add(default_admin)
+    try:
+        db.create_all()
+
+        # Суперадмин по умолчанию
+        if not User.query.filter_by(username='admin').first():
+            admin = User(
+                username='admin', 
+                password=generate_password_hash('admin123', method='scrypt'), 
+                role='superadmin'
+            )
+            db.session.add(admin)
+
+        # Гость
+        if not User.query.filter_by(username='guest').first():
+            guest = User(
+                username='guest', 
+                password=generate_password_hash('guest123', method='scrypt'), 
+                role='guest'
+            )
+            db.session.add(guest)
+
+        # Администраторы
+        admin_users = ['Sherdor', 'Abdulaziz', 'Abdulbosit', 'Usmoncha', 'Muhammadsodiq']
+        default_pwd = generate_password_hash('Sam11sam1', method='scrypt')
+
+        for username in admin_users:
+            if not User.query.filter_by(username=username).first():
+                new_admin = User(username=username, password=default_pwd, role='admin')
+                db.session.add(new_admin)
+
         db.session.commit()
+    except Exception as e:
+        db.session.rollback()
 
 # --- МАРШРУТЫ И ЛОГИКА ---
 
@@ -57,7 +105,7 @@ with app.app_context():
 @login_required
 def dashboard():
     show_hidden = request.args.get('show_hidden', 'false').lower() == 'true'
-    
+
     if current_user.role == 'superadmin' and show_hidden:
         records = Record.query.order_by(Record.updated_at.desc()).all()
     else:
@@ -83,7 +131,7 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
-        
+
         if user and check_password_hash(user.password, password):
             login_user(user)
             return redirect(url_for('dashboard'))
@@ -99,6 +147,10 @@ def logout():
 @app.route('/add_record', methods=['POST'])
 @login_required
 def add_record():
+    if current_user.role == 'guest':
+        flash('У гостей нет прав добавления записей!')
+        return redirect(url_for('dashboard'))
+
     rec_type = request.form.get('type')
     amount = float(request.form.get('amount', 0))
     description = request.form.get('description')
@@ -110,6 +162,10 @@ def add_record():
         updated_by=current_user.username
     )
     db.session.add(new_rec)
+
+    log = AuditLog(action=f"Добавлено {rec_type}: {amount} ({description})", user_name=current_user.username)
+    db.session.add(log)
+
     db.session.commit()
     flash('Запись успешно добавлена!')
     return redirect(url_for('dashboard'))
@@ -118,11 +174,15 @@ def add_record():
 @login_required
 def update_avatar():
     file = request.files.get('avatar_file')
+    avatar_url = request.form.get('avatar_url')
+
     if file:
-        filename = secure_filename(file.filename)
-        current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={filename}"
-        db.session.commit()
-        flash('Аватар обновлен!')
+        current_user.avatar_url = f"https://api.dicebear.com/7.x/bottts/svg?seed={file.filename}"
+    elif avatar_url:
+        current_user.avatar_url = avatar_url
+
+    db.session.commit()
+    flash('Аватар обновлен!')
     return redirect(url_for('dashboard'))
 
 @app.route('/export_csv')
@@ -142,6 +202,12 @@ def export_csv():
         mimetype='text/csv; charset=utf-8-sig',
         headers={'Content-Disposition': 'attachment; filename=financial_report.csv'}
     )
+
+@app.route('/audit')
+@login_required
+def audit():
+    logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).all()
+    return render_template('audit.html', logs=logs)
 
 @app.route('/toggle_hide_record/<int:id>', methods=['POST'])
 @login_required
